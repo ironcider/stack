@@ -1,7 +1,5 @@
-++++++++++++++++++++++++++++++++++++++
-
-           ironcider/stack
-           
-         openstack deployment
-         
-++++++++++++++++++++++++++++++++++++++
+********************
+ironcider/stack
+openstack deployment
+********************
+Welcome. 
