@@ -292,3 +292,127 @@ wget http://cdn.download.cirros-cloud.net/0.3.3/cirros-0.3.3-x86_64-disk.img
 glance image-create --name "cirros-0.3.3-x86_64" --file cirros-0.3.3-x86_64-disk.img \
   --disk-format qcow2 --container-format bare --is-public True --progress
 ```
+
+#### Nova configuration
+
+A database is required for the Nova module. 
+
+```bash
+mysql -u root -p
+CREATE DATABASE nova;
+GRANT ALL PRIVILEGES ON nova.* TO 'nova'@'localhost' \
+  IDENTIFIED BY 'pass';
+GRANT ALL PRIVILEGES ON nova.* TO 'nova'@'%' \
+  IDENTIFIED BY 'pass';
+exit
+```
+
+Create and assign a user to the Nova module. 
+
+```bash
+keystone user-create --name nova --pass password
+keystone user-role-add --user nova --tenant service --role admin
+keystone service-create --name nova --type compute --description "OpenStack Compute"
+keystone endpoint-create \
+  --service-id $(keystone service-list | awk '/ compute / {print $2}') \
+  --publicurl http://127.0.0.1:8774/v2/%\(tenant_id\)s \
+  --internalurl http://127.0.0.1:8774/v2/%\(tenant_id\)s \
+  --adminurl http://127.0.0.1:8774/v2/%\(tenant_id\)s \
+  --region regionOne
+  ```
+  
+To install and configure the Nova compute service: 
+  
+```bash
+yum install openstack-nova-api openstack-nova-cert openstack-nova-conductor \
+  openstack-nova-console openstack-nova-novncproxy openstack-nova-scheduler \
+  python-novaclient
+  ```
+  
+Edit the ``/etc/nova/nova.conf`` file with the following changes:
+  
+```bash
+[database]
+...
+connection = mysql://nova:NOVA_DBPASS@controller/nova
+
+[DEFAULT]
+...
+rpc_backend = rabbit
+rabbit_host = controller
+rabbit_password = RABBIT_PASS
+
+[DEFAULT]
+...
+auth_strategy = keystone
+ 
+[keystone_authtoken]
+...
+auth_uri = http://controller:5000/v2.0
+identity_uri = http://controller:35357
+admin_tenant_name = service
+admin_user = nova
+admin_password = NOVA_PASS
+
+[DEFAULT]
+...
+my_ip = 10.0.0.11
+
+[DEFAULT]
+...
+vncserver_listen = 10.0.0.11
+vncserver_proxyclient_address = 10.0.0.11
+
+[glance]
+...
+host = controller
+```
+
+Populate the Nova database with ``su -s /bin/sh -c "nova-manage db sync" nova``
+
+Start the Nova compute services: 
+
+```bash
+systemctl enable openstack-nova-api.service openstack-nova-cert.service \
+  openstack-nova-consoleauth.service openstack-nova-scheduler.service \
+  openstack-nova-conductor.service openstack-nova-novncproxy.service
+systemctl start openstack-nova-api.service openstack-nova-cert.service \
+  openstack-nova-consoleauth.service openstack-nova-scheduler.service \
+  openstack-nova-conductor.service openstack-nova-novncproxy.service
+```
+
+Install further required packages with ``yum install openstack-nova-compute sysfsutils`` then edit ``/etc/nova/nova.conf`` with:
+
+```bash
+[DEFAULT]
+...
+vnc_enabled = True
+vncserver_listen = 0.0.0.0
+vncserver_proxyclient_address = MANAGEMENT_INTERFACE_IP_ADDRESS
+novncproxy_base_url = http://controller:6080/vnc_auto.html
+```
+
+Check that the system allows hardware acceleration (a number greater than 1 means the system supports hardware acceleration):
+
+```bash
+egrep -c '(vmx|svm)' /proc/cpuinfo
+```
+
+Edit ``/etc/nova/nova.conf`` to use QEMU:
+
+```bash
+[libvirt]
+...
+virt_type = qemu
+```
+
+Start the compute services and configure them to start on reboot, then ensure the nova services are running correctly: 
+
+```bash
+systemctl enable libvirtd.service openstack-nova-compute.service
+systemctl start libvirtd.service
+systemctl start openstack-nova-compute.service
+nova service-list
+nova image-list
+```
+```
